@@ -56,69 +56,19 @@ def lambda_handler(event, context):
     logger.info('Event %s', event)
     OAUTH_token = event['context']['git-token']
     OutputBucket = event['context']['output-bucket']
-    # temp_archive = '/tmp/archive.zip'
-    # Identify git host flavour
-    hostflavour = 'generic'
-    if 'X-Hub-Signature' in event['params']['header'].keys():
-        hostflavour = 'githubent'
-    elif 'X-Gitlab-Event' in event['params']['header'].keys():
-        hostflavour = 'gitlab'
-    elif 'User-Agent' in event['params']['header'].keys():
-        if event['params']['header']['User-Agent'].startswith('Bitbucket-Webhooks'):
-            hostflavour = 'bitbucket'
-        elif event['params']['header']['User-Agent'].startswith('GitHub-Hookshot'):
-            hostflavour = 'github'
-    elif event['body-json']['publisherId'] == 'tfs':
-        hostflavour='tfs'
     
     headers = {}
     branch = 'master'
-    if hostflavour == 'githubent':
-        archive_url = event['body-json']['repository']['archive_url']
-        owner = event['body-json']['repository']['owner']['name']
-        name = event['body-json']['repository']['name']
-        # replace the code archive download and branch reference placeholders
-        archive_url = archive_url.replace('{archive_format}', 'zipball').replace('{/ref}', '/master')
-        # add access token information to archive url
-        archive_url = archive_url+'?access_token='+OAUTH_token
-    elif hostflavour == 'github':
-        archive_url = event['body-json']['repository']['archive_url']
-        owner = event['body-json']['repository']['owner']['login']
-        name = event['body-json']['repository']['name']
-        # replace the code archive download and branch reference placeholders
-        branch_name = event['body-json']['ref'].replace('refs/heads/', '')
-        archive_url = archive_url.replace('{archive_format}', 'zipball').replace('{/ref}', '/' + branch_name)
-        # add access token information to archive url
-        archive_url = archive_url+'?access_token='+OAUTH_token
-    elif hostflavour == 'gitlab':
-        #https://gitlab.com/jaymcconnell/gitlab-test-30/repository/archive.zip?ref=master
-        archive_root = event['body-json']['project']['http_url'].strip('.git')
-        project_id = event['body-json']['project_id']
-        branch = event['body-json']['ref'].replace('refs/heads/', '')
-        archive_url = "https://gitlab.com/api/v4/projects/{}/repository/archive.zip".format(project_id)
-        params = {'private_token': OAUTH_token, 'sha': branch}
 
-        owner = event['body-json']['project']['namespace']
-        name = event['body-json']['project']['name']
-
-    elif hostflavour == 'bitbucket':
-        branch = event['body-json']['push']['changes'][0]['new']['name']
-        archive_url = event['body-json']['repository']['links']['html']['href']+'/get/' + branch + '.zip'
-        owner = event['body-json']['repository']['owner']['username']
-        name = event['body-json']['repository']['name']
-        r = requests.post('https://bitbucket.org/site/oauth2/access_token', data={'grant_type': 'client_credentials'}, auth=(event['context']['oauth-key'], event['context']['oauth-secret']))
-        if 'error' in r.json().keys():
-            logger.error('Could not get OAuth token. %s: %s' % (r.json()['error'], r.json()['error_description']))
-            raise Exception('Failed to get OAuth token')
-        headers['Authorization'] = 'Bearer ' + r.json()['access_token']
-    elif hostflavour == 'tfs':
-        archive_url = event['body-json']['resourceContainers']['account']['baseUrl'] + 'DefaultCollection/' + event['body-json']['resourceContainers']['project']['id'] + '/_apis/git/repositories/' + event['body-json']['resource']['repository']['id'] + '/items'
-        owner = event['body-json']['resource']['pushedBy']['displayName']
-        name = event['body-json']['resource']['repository']['name']
-        pat_in_base64 = base64.encodestring(':%s' % event['context']['git-token'])
-        headers['Authorization'] = 'Basic %s' % pat_in_base64
-        headers['Authorization'] = headers['Authorization'].replace('\n','')
-        headers['Accept'] = 'application/zip'
+    #https://gitlab.com/jaymcconnell/gitlab-test-30/repository/archive.zip?ref=master
+    archive_root = event['body-json']['project']['http_url'].strip('.git')
+    project_id = event['body-json']['project_id']
+    branch = event['body-json']['ref'].replace('refs/heads/', '')
+    checkout_sha = event['body-json']['checkout_sha']
+    archive_url = "https://gitlab.com/api/v4/projects/{}/repository/archive.zip".format(project_id)
+    params = {'private_token': OAUTH_token, 'sha': branch}
+    owner = event['body-json']['project']['namespace']
+    name = event['body-json']['project']['name']
 
     s3_archive_file = "%s/%s/%s/%s.zip" % (owner, name, branch, name)
     # download the code archive via archive url
@@ -138,6 +88,11 @@ def lambda_handler(event, context):
     # Write to /tmp dir without any common preffixes
     zip.extractall(path, get_members(zip))
 
+    # add checkout_sha
+    checkout_sha_file = open('/tmp/code/checkout_sha.txt', 'w') 
+    checkout_sha_file.write(checkout_sha) 
+    checkout_sha_file.close()
+    
     # Create zip from /tmp dir without any common preffixes
     shutil.make_archive(zipped_code, 'zip', path)
     logger.info("Uploading zip to S3://%s/%s" % (OutputBucket, s3_archive_file))

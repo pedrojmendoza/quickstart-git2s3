@@ -70,6 +70,7 @@ def lambda_handler(event, context):
     owner = event['body-json']['project']['namespace']
     name = event['body-json']['project']['name']
 
+    s3_archive_file_with_hash = "%s/%s/%s/%s.%s.zip" % (owner, name, branch, name, checkout_sha)
     s3_archive_file = "%s/%s/%s/%s.zip" % (owner, name, branch, name)
     # download the code archive via archive url
     logger.info('Downloading archive from %s' % archive_url)
@@ -95,6 +96,9 @@ def lambda_handler(event, context):
     
     # Create zip from /tmp dir without any common preffixes
     shutil.make_archive(zipped_code, 'zip', path)
+    logger.info("Uploading zip (with hash) to S3://%s/%s" % (OutputBucket, s3_archive_file_with_hash))
+    s3_client.upload_file(zipped_code + '.zip', OutputBucket, s3_archive_file_with_hash)
+    logger.info('Upload (with hash) Complete')
     logger.info("Uploading zip to S3://%s/%s" % (OutputBucket, s3_archive_file))
     s3_client.upload_file(zipped_code + '.zip', OutputBucket, s3_archive_file)
     logger.info('Upload Complete')
